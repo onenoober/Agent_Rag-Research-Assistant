@@ -61,6 +61,107 @@
 
 ---
 
+## 1.5 当前实现状态（As-Is）
+
+> **⚠️ 说明**：本文档描述的是项目的**目标架构与设计思路**，但由于开发是迭代进行的，部分模块的实现状态与文档描述可能存在差异。以下是当前代码库中**已实现**的核心模块及其入口，供快速定位实现细节。
+
+### 已实现模块清单
+
+| 模块 | 状态 | 代码路径 | 入口/调用方式 |
+|-----|------|---------|--------------|
+| **MCP Server** | ✅ 已实现 | `src/mcp_server/` | `python -m src.mcp_server.server` (Stdio Transport) |
+| **配置加载** | ✅ 已实现 | `src/core/settings.py` | `load_settings(path)` → `Settings` 对象 |
+| **Ingestion Pipeline** | ✅ 已实现 | `src/ingestion/pipeline.py` | `IngestionPipeline(settings).run(file_path)` |
+| **文档生命周期管理** | ✅ 已实现 | `src/ingestion/document_manager.py` | `DocumentManager` 跨 Chroma/BM25/ImageStorage/FileIntegrity 删除 |
+| **混合检索 (Hybrid Search)** | ✅ 已实现 | `src/core/query_engine/hybrid_search.py` | `HybridSearch.search(query, top_k)` |
+| **Dense 检索** | ✅ 已实现 | `src/core/query_engine/dense_retriever.py` | `DenseRetriever.retrieve(query, top_k)` |
+| **Sparse 检索 (BM25)** | ✅ 已实现 | `src/core/query_engine/sparse_retriever.py` | `SparseRetriever.retrieve(keywords, top_k)` |
+| **Reranker** | ✅ 已实现 | `src/core/query_engine/reranker.py` | `CoreReranker.rerank(query, results, top_k)` |
+| **向量存储 (Chroma)** | ✅ 已实现 | `src/libs/vector_store/chroma_store.py` | `ChromaStore` (通过 `VectorStoreFactory.create`) |
+| **BM25 索引** | ✅ 已实现 | `src/ingestion/storage/bm25_indexer.py` | `BM25Indexer.build()` / `.query()` |
+| **可插拔 Provider 工厂** | ✅ 已实现 | `src/libs/*/factory.py` | `LLMFactory` / `EmbeddingFactory` / `SplitterFactory` / `VectorStoreFactory` |
+| **Vision LLM (图片Caption)** | ✅ 已实现 | `src/ingestion/transform/image_captioner.py` | `ImageCaptioner.transform(chunks)` |
+| **Formula 提取 (Pix2Text)** | ✅ 已实现 | `src/ingestion/transform/formula_extractor.py` | `FormulaExtractor.transform(chunks)` |
+| **Formula Search Enhancer** | ✅ 已实现 | `src/core/query_engine/formula_enhancer.py` | `FormulaSearchEnhancer` 公式感知检索增强 |
+| **追踪系统 (Trace)** | ✅ 已实现 | `src/core/trace/` | `TraceContext` → `TraceCollector.collect()` → `logs/traces.jsonl` |
+| **Dashboard** | ✅ 已实现 | `src/observability/dashboard/` | `streamlit run src/observability/dashboard/app.py` |
+| **评估模块** | ✅ 已实现 | `src/observability/evaluation/` | `EvalRunner.run()` / `RagasEvaluator.evaluate()` |
+| **Scripts 入口** | ✅ 已实现 | `scripts/` | `python scripts/ingest.py` / `query.py` / `evaluate.py` / `start_dashboard.py` |
+
+### 已实现 Provider 清单
+
+#### LLM Providers
+
+| Provider | 实现文件 | 支持模型 | 说明 |
+|---------|---------|------|------|
+| OpenAI | `src/libs/llm/openai_llm.py` | gpt-4o, gpt-4-turbo, gpt-3.5-turbo 等 | OpenAI 官方 API |
+| Azure OpenAI | `src/libs/llm/azure_llm.py` | gpt-4o, gpt-4, gpt-35-turbo 等 | Azure 企业级部署 |
+| DeepSeek | `src/libs/llm/deepseek_llm.py` | deepseek-chat, deepseek-coder 等 | DeepSeek API |
+| Ollama | `src/libs/llm/ollama_llm.py` | llama2, mistral, qwen 等 | 本地私有化部署 |
+| **Qwen (DashScope)** | `src/libs/llm/qwen_llm.py` | qwen-plus, qwen-turbo, qwen-max 等 | 阿里云通义千问 API |
+
+#### Embedding Providers
+
+| Provider | 实现文件 | 支持模型 | 说明 |
+|---------|---------|------|------|
+| OpenAI | `src/libs/embedding/openai_embedding.py` | text-embedding-3-small/large | OpenAI 官方 Embedding |
+| Azure | `src/libs/embedding/azure_embedding.py` | text-embedding-ada-002 等 | Azure OpenAI Embedding |
+| Ollama | `src/libs/embedding/ollama_embedding.py` | nomic-embed-text, mxbai-embed-large 等 | 本地 Embedding 模型 |
+| **Qwen (DashScope)** | `src/libs/embedding/qwen_embedding.py` | text-embedding-v3, text-embedding-v2 | 阿里云通义千问 Embedding |
+
+#### Vision LLM Providers
+
+| Provider | 实现文件 | 支持模型 | 说明 |
+|---------|---------|------|------|
+| Azure Vision | `src/libs/llm/azure_vision_llm.py` | GPT-4o, GPT-4-Vision | Azure 企业级视觉模型 |
+| OpenAI Vision | `src/libs/llm/openai_vision_llm.py` | GPT-4o, GPT-4-Vision | OpenAI 视觉模型 |
+| **Qwen Vision** | `src/libs/llm/qwen_vision_llm.py` | qwen-omni-turbo, qwen-vl-max 等 | 阿里云通义千问视觉模型 |
+
+### 已实现 Splitter 策略
+
+| Splitter | 实现文件 | 适用场景 | 说明 |
+|---------|---------|------|------|
+| RecursiveSplitter | `src/libs/splitter/recursive_splitter.py` | 通用文档 | LangChain RecursiveCharacterTextSplitter |
+| **SmartSplitter** | `src/libs/splitter/smart_splitter.py` | 通用文档 | 自动检测文档结构（TOC/代码/法律/JSON等） |
+| **StructuredSplitter** | `src/libs/splitter/structured_splitter.py` | 结构化文档 | 基于解析器输出的文档结构切分 |
+| **AcademicPaperSplitter** | `src/libs/splitter/academic_splitter.py` | 学术论文 | 专用于研究论文的语义切分 |
+
+### 主要入口文件
+
+1. **MCP Server**：`src/mcp_server/server.py` — 使用官方 MCP SDK，通过 stdio 与 Client 通信
+2. **配置入口**：`src/core/settings.py` — 读取 `config/settings.yaml`，返回 `Settings` dataclass
+3. **离线摄取**：`src/ingestion/pipeline.py` — `IngestionPipeline.run(file_path, collection, on_progress)`
+4. **在线查询**：`src/core/query_engine/hybrid_search.py` — `HybridSearch.search(query, top_k, filters)`
+5. **命令行工具**：`scripts/ingest.py`、`scripts/query.py`、`scripts/start_dashboard.py`
+
+### 关键数据目录
+
+```
+data/
+├── db/
+│   ├── ingestion_history.db    # 文件完整性记录 (SQLite)
+│   ├── image_index.db         # 图片索引映射 (SQLite)
+│   ├── chroma/                # ChromaDB 向量库
+│   └── bm25/                 # BM25 索引 (JSON 格式)
+├── images/                    # 提取的图片文件
+│   └── {collection}/
+│       └── {doc_hash}/
+└── logs/
+    └── traces.jsonl           # 追踪日志 (JSON Lines)
+```
+
+### 未包含在本说明的范围
+
+以下模块属于 **Agent 相关实现**，不在本技术说明的覆盖范围内：
+
+- `src/agent/` — Agent 图编排、Chat Service、Tools 注册
+- `src/apps/` — Streamlit Chat/Research Agent UI
+- 相关 E2E/Integration 测试（`tests/e2e/test_agent_*`, `tests/integration/test_agent_*`）
+
+> 本文档的后续章节会优先聚焦于上述已实现模块的架构与设计说明。
+
+---
+
 ## 2. 核心特点
 
 ### RAG 策略与设计亮点
@@ -124,6 +225,16 @@
 - **优势**：
     - **架构统一**：无需引入复杂的 CLIP 等多模态向量库，复用现有的纯文本 RAG 检索链路即可实现“搜文字出图”。
     - **语义对齐**：通过 LLM 将图像的视觉特征转化为语义理解，使用户能通过自然语言精准检索到图表、流程图等视觉信息。
+
+### 数学公式处理 (Mathematical Formula Processing)
+本项目针对学术论文和技术文档中的数学公式实现了专门的 **"Formula-to-Text" (公式转文)** 处理策略，使检索系统能够精准理解和召回公式相关的内容：
+- **公式检测与识别 (Formula Detection)**：利用 Pix2Text 引擎自动检测并识别文档中的 LaTeX 公式、Unicode 数学符号，以及以图像形式存在的公式。
+- **公式结构化存储 (Structured Formula Storage)**：将识别的公式转换为标准 LaTeX 格式，为每个公式分配全局唯一 ID，建立公式与上下文的关联映射。
+- **统一向量空间**：将公式的 LaTeX 源码及其语义描述注入到 Chunk 的 metadata 和正文中，确保公式内容可通过文本检索被召回。
+- **优势**：
+    - **语义对齐**：通过 Pix2Text 将公式的视觉表示转化为结构化文本，使公式的语义信息可被 Embedding 模型理解。
+    - **双向检索**：支持"以文搜公式"（查询包含某公式描述的文档）和"以公式搜文"（查询包含某数学表达式的文档）。
+    - **上下文感知**：通过位置关联和文本邻近分析，将公式与其解释性段落关联，支持"公式-解释"联合检索。
 
 ### 可观测性、可视化管理与评估体系 (Observability, Visual Management & Evaluation)
 针对 RAG 系统常见的“黑盒”问题，本项目致力于让每一次生成过程都**透明可见**且**可量化**，并提供完整的**本地可视化管理平台**：
@@ -240,9 +351,12 @@
 	- 输出标准 `Document`：`id|source|text(markdown)|metadata`。metadata 至少包含 `source_path`, `doc_type`, `title/heading_outline`, `page/slide`（如适用）, `images`（图片引用列表）。
 	- Loader 不负责切分：只做“格式统一 + 结构抽取 + 引用收集”，确保切分策略可独立迭代与度量。
 
-- Splitter（LangChain 负责切分；独立、可控）
-	- **实现方案：使用 LangChain 的 `RecursiveCharacterTextSplitter` 进行切分。**
-		- 优势：该方法对 Markdown 文档的结构（标题、段落、列表、代码块）有天然的适配性，能够通过配置语义断点（Separators）实现高质量、语义完整的切块。
+- Splitter（多种切分策略可选；独立、可控）
+	- **实现方案：系统实现了多种切分器，可通过配置选择：**
+		- **RecursiveSplitter**：使用 LangChain 的 `RecursiveCharacterTextSplitter`，对 Markdown 文档的结构（标题、段落、列表、代码块）有天然的适配性。
+		- **SmartSplitter**：智能切分器，自动检测文档结构（目录、代码块、法律条款、JSON等）并采用差异化策略。
+		- **StructuredSplitter**：基于解析器输出的文档结构进行切分，保留层级关系。
+		- **AcademicPaperSplitter**：专为学术论文设计的语义切分器，适合处理摘要、引言、方法、结果、讨论等论文结构。
 	- Splitter 输入：Loader 产出的 Markdown `Document`。
 	- Splitter 输出：若干 `Chunk`（或 Document-like chunks），每个 chunk 必须携带稳定的定位信息与来源信息：`source`, `chunk_index`, `start_offset/end_offset`（或等价定位字段）。
 
@@ -260,6 +374,10 @@
 			- 策略：扫描文档片段中的图像引用，调用 Vision LLM（如 GPT-4o）进行视觉理解。
 			- 动作：生成高保真的文本描述（Caption），描述图表逻辑或提取截图文字。
 			- 存储：将 Caption 文本“缝合”进 Chunk 的正文或 Metadata 中，打通模态隔阂，实现“搜文出图”。
+		4. **公式增强 (Formula Enrichment / Pix2Text)**：
+			- 策略：利用 Pix2Text 引擎检测并识别文档中的数学公式（LaTeX、图片形式）。
+			- 动作：为每个公式分配唯一 ID，提取 LaTeX 源码，并通过位置邻近分析关联上下文文本。
+			- 存储：将公式 LaTeX 及其语义描述注入到 Chunk 的 metadata（`formulas` 字段）中，支持公式感知检索。
 	- **工程特性**：Transform 步骤设计为原子化与幂等操作，支持针对特定 Chunk 的独立重试与增量更新，避免因 LLM 调用失败导致整个文档处理中断。
 
 - **Embedding (双路向量化)**
@@ -361,6 +479,8 @@
 
 #### 3.2.2 传输协议：Stdio 本地通信
 
+> **⚠️ 运行约束与日志规范（重要补充）**
+
 本项目采用 **Stdio Transport** 作为唯一通信模式。
 
 - **工作方式**：Client（VS Code Copilot、Claude Desktop）以子进程方式启动我们的 Server，双方通过标准输入/输出交换 JSON-RPC 消息。
@@ -368,9 +488,21 @@
 	- **零配置**：无需网络端口、无需鉴权，用户只需在 Client 配置文件中指定启动命令即可使用。
 	- **隐私安全**：数据不经过网络，天然适合处理私有知识库与敏感业务数据。
 	- **契合定位**：Stdio 完美适配开发者本地工作流，满足私有知识管理与快速原型验证需求。
-- **实现约束**：
-	- `stdout` 仅输出合法 MCP 消息，禁止混入任何日志或调试信息。
-	- 日志统一输出至 `stderr`，避免污染通信通道。
+
+**实现约束（必须遵守）**：
+
+1. **通信隔离**：`stdout` 仅输出合法 MCP 消息，禁止混入任何日志或调试信息
+2. **日志输出**：所有日志统一输出至 `stderr`，避免污染通信通道
+3. **启动时重定向**：`server.py` 初始化时调用 `_redirect_all_loggers_to_stderr()`，强制所有第三方库的 logger 也输出到 stderr
+4. **重量级导入**：使用 `_preload_heavy_imports()` 延迟导入 LLM/Embedding 等重量级模块，防止 import 死锁
+
+**启动命令**：
+
+```bash
+python -m src.mcp_server.server
+```
+
+**日志配置**：追踪日志写入 `logs/traces.jsonl`（JSON Lines 格式），应用日志输出到 stderr。
 
 #### 3.2.3 SDK 与实现库选型
 
@@ -483,12 +615,14 @@ MCP 协议的 Tool 返回格式支持多种内容类型（`content` 数组），
 | **Ollama / vLLM (本地)** | 完全离线、隐私敏感、无 API 成本 | `provider: ollama`, `base_url`, `model` |
 
 - **技术选型建议**：
-	- 本项目采用自研的 `BaseLLM` / `BaseEmbedding` 抽象基类，配合工厂模式（`llm_factory.py` / `embedding_factory.py`）实现统一调用接口。已内置 Azure OpenAI、OpenAI、Ollama、DeepSeek 四种 Provider 适配。
+	- 本项目采用自研的 `BaseLLM` / `BaseEmbedding` 抽象基类，配合工厂模式（`llm_factory.py` / `embedding_factory.py`）实现统一调用接口。已内置 Azure OpenAI、OpenAI、Ollama、DeepSeek、**Qwen (DashScope)** 五种 Provider 适配。
 	- 对于其他 Provider，可通过 **OpenAI-Compatible 模式**接入（设置自定义 `api_base`），或实现 `BaseLLM` 接口并在工厂中注册。
 
 	- 对于企业级需求，可在其基础上增加统一的 **重试、限流、日志** 中间层，提升生产可靠性，但本项目暂不实现，这里仅提供思路。
 	- **Vision LLM 扩展**：针对图像描述生成（Image Captioning）需求，系统扩展了 `BaseVisionLLM` 接口，支持文本+图片的多模态输入。当前实现：
 		- **Azure OpenAI Vision**（GPT-4o/GPT-4-Vision）：企业级合规部署，支持复杂图表解析，与 Azure 生态深度集成。
+		- **OpenAI Vision**（GPT-4o/GPT-4-Vision）：OpenAI 官方视觉模型，支持高质量图像理解。
+		- **Qwen Vision (DashScope)**（qwen-omni-turbo/qwen-vl-max）：阿里云通义千问视觉模型，性价比高，支持中文图像理解。
 
 #### 3.3.3 检索策略抽象
 
@@ -519,9 +653,13 @@ MCP 协议的 Tool 返回格式支持多种内容类型（`content` 数组），
 - **语义切分**：利用 Embedding 相似度检测语义断点，确保每个 Chunk 是自包含的语义单元。
 - **结构感知切分**：根据文档结构（Markdown 标题、代码块、列表等）进行切分。
 
-本项目当前采用 **LangChain 的 `RecursiveCharacterTextSplitter`** 进行切分，该方法对 Markdown 文档的结构（标题、段落、列表、代码块）有天然的适配性，能够通过配置语义断点（Separators）实现高质量、语义完整的切块。
+本项目当前采用多种分块策略，支持可插拔切换：
+- **RecursiveSplitter（默认）**：LangChain 的 `RecursiveCharacterTextSplitter`，对 Markdown 文档结构有天然适配性。
+- **SmartSplitter**：自动检测文档类型（TOC/代码块/法律文档/JSON/表格），选择最佳切分策略。
+- **StructuredSplitter**：基于解析器输出的文档结构（章节/页面）进行切分。
+- **AcademicPaperSplitter**：专为学术论文设计，保留摘要/引言/方法/结果/讨论/结论等语义结构。
 
-> **当前实现说明**：目前系统使用 LangChain RecursiveCharacterTextSplitter。架构设计上预留了切换能力，如需切换为 SentenceSplitter、SemanticSplitter 或自定义切分器，只需实现 BaseSplitter 接口并在配置中指定即可。
+> **当前实现说明**：可通过配置 `ingestion.splitter` 选择策略（`recursive`/`smart`/`structured`/`academic`），只需实现 BaseSplitter 接口即可扩展新策略。
 
 ---
 
@@ -568,6 +706,15 @@ MCP 协议的 Tool 返回格式支持多种内容类型（`content` 数组），
 - **融合（Fusion）**：使用 RRF (Reciprocal Rank Fusion) 算法将两路结果合并排序。
 - **精排（Rerank）**：对融合后的候选集进行重排序，支持 None / Cross-Encoder / LLM Rerank 三种模式。
 
+>**公式检索增强（Formula Search Enhancer）**：
+> 除标准混合检索外，系统还实现了 `FormulaSearchEnhancer` 模块，专门处理数学公式相关的检索需求：
+> - **公式检测**：自动识别查询中的 LaTeX 公式（`$...$`, `$$...$$`）和 Unicode 数学符号
+> - **公式检索**：利用 chunk metadata 中存储的公式信息进行跨引用检索
+> - **上下文增强**：为检索结果添加公式相关的上下文信息（公式ID、类型、页码等）
+> - **相关片段发现**：通过公式-Chunk 映射关系，发现与公式相关的其他文本片段
+>
+> 代码位置：`src/core/query_engine/formula_enhancer.py`
+
 > **当前实现说明**：目前系统实现了 Hybrid + Rerank 策略。架构设计上预留了策略切换能力，如需使用纯稠密或纯稀疏召回，可通过配置切换；融合算法和 Reranker 同样支持替换。
 
 #### 3.3.4 评估框架抽象
@@ -592,39 +739,65 @@ MCP 协议的 Tool 返回格式支持多种内容类型（`content` 数组），
 
 #### 3.3.5 配置管理与切换流程
 
-- **配置文件结构示例** (`config/settings.yaml`)：
-	```yaml
-	llm:
-	  provider: azure  # azure | openai | ollama | deepseek
-	  model: gpt-4o
-	  # provider-specific configs...
-	
-	embedding:
-	  provider: openai
-	  model: text-embedding-3-small
-	
-	vector_store:
-	  backend: chroma  # chroma | qdrant | pinecone
-	
-	retrieval:
-	  sparse_backend: bm25  # bm25 | elasticsearch
-	  fusion_algorithm: rrf  # rrf | weighted_sum
-	  rerank_backend: cross_encoder  # none | cross_encoder | llm
-	
-	evaluation:
-	  backends: [ragas, custom_metrics]
-	
-	dashboard:
-	  enabled: true
-	  port: 8501
-	  traces_dir: ./logs
-	```
+> **⚠️ 重要说明**：以下配置字段以 `config/settings.yaml` 为**唯一事实来源**。文档中的示例配置仅用于说明结构，实际生效的配置请以 YAML 文件中的定义为准。
 
-- **切换流程**：
+**当前配置字段对照表**：
 
-	1. 修改 `settings.yaml` 中对应组件的 `backend` / `provider` 字段。
-	2. 确保新后端的依赖已安装、凭据已配置。
-	3. 重启服务，工厂函数自动加载新实现，无需修改业务代码。
+| 配置路径 | 类型 | 默认值 | 影响模块/类 | 说明 |
+|---------|------|--------|-------------|------|
+| `llm.provider` | string | **必填** | `LLMFactory` | LLM 提供商：`openai`, `azure`, `ollama`, `deepseek`, `qwen` |
+| `llm.model` | string | **必填** | `LLMFactory` | 模型名称，如 `gpt-4o`, `qwen-plus` |
+| `llm.base_url` | string | (可选) | `LLMFactory` | API 端点（如 DashScope OpenAI 兼容端点） |
+| `llm.api_key` | string | (可选) | `LLMFactory` | API 密钥，可通过环境变量传入 |
+| `llm.temperature` | float | `0.0` | `LLMFactory` | 生成温度 |
+| `llm.max_tokens` | int | `4096` | `LLMFactory` | 最大 token 数 |
+| `embedding.provider` | string | **必填** | `EmbeddingFactory` | Embedding 提供商：`openai`, `azure`, `ollama`, `qwen` |
+| `embedding.model` | string | **必填** | `EmbeddingFactory` | Embedding 模型名 |
+| `embedding.dimensions` | int | `1024` | `EmbeddingFactory` | 向量维度（需与模型匹配） |
+| `embedding.base_url` | string | (可选) | `EmbeddingFactory` | API 端点 |
+| `embedding.api_key` | string | (可选) | `EmbeddingFactory` | API 密钥 |
+| `vision_llm.enabled` | bool | `false` | `ImageCaptioner` | 是否启用 Vision LLM 进行图片描述 |
+| `vision_llm.provider` | string | (可选) | `ImageCaptioner` | Vision LLM 提供商：`qwen`, `openai`, `azure` |
+| `vision_llm.model` | string | (可选) | `ImageCaptioner` | Vision 模型名，如 `qwen-omni-turbo` |
+| `vision_llm.max_image_size` | int | `2048` | `ImageCaptioner` | 图片压缩最大边长 |
+| `vector_store.provider` | string | **必填** | `VectorStoreFactory` | 向量存储：`chroma`（当前唯一实现） |
+| `vector_store.persist_directory` | string | `./data/db/chroma` | `ChromaStore` | 向量库持久化目录 |
+| `vector_store.collection_name` | string | `default` | `ChromaStore` | 默认集合名 |
+| `retrieval.dense_top_k` | int | `20` | `HybridSearchConfig` | Dense 检索返回候选数 |
+| `retrieval.sparse_top_k` | int | `20` | `HybridSearchConfig` | Sparse(BM25) 检索返回候选数 |
+| `retrieval.fusion_top_k` | int | `10` | `HybridSearchConfig` | RRF 融合后返回数 |
+| `retrieval.rrf_k` | int | `60` | `RRFFusion` | RRF 融合常数 k |
+| `rerank.enabled` | bool | `true` | `CoreReranker` | 是否启用精排 |
+| `rerank.provider` | string | `cross_encoder` | `RerankerFactory` | 精排后端：`none`, `cross_encoder`, `llm` |
+| `rerank.model` | string | (可选) | `RerankerFactory` | 精排模型名 |
+| `rerank.top_k` | int | `5` | `CoreReranker` | 精排后返回数 |
+| `evaluation.enabled` | bool | `false` | `EvalRunner` | 是否启用评估 |
+| `evaluation.provider` | string | `custom` | `EvalRunner` | 评估框架：`ragas`, `deepeval`, `custom` |
+| `evaluation.metrics` | list | `["hit_rate", "mrr"]` | `EvalRunner` | 评估指标列表 |
+| `observability.log_level` | string | `INFO` | `get_logger` | 日志级别：`DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `observability.trace_enabled` | bool | `true` | `TraceCollector` | 是否启用追踪 |
+| `observability.trace_file` | string | `./logs/traces.jsonl` | `TraceCollector` | 追踪日志路径 |
+| `observability.structured_logging` | bool | `true` | `JSONFormatter` | 是否使用结构化 JSON 日志 |
+| `ingestion.chunk_size` | int | `1000` | `DocumentChunker` | 文本分块大小（字符数） |
+| `ingestion.chunk_overlap` | int | `200` | `DocumentChunker` | 分块重叠字符数 |
+| `ingestion.splitter` | string | `smart` | `SplitterFactory` | 分块策略：`recursive`, `structured`, `smart`, `academic` |
+| `ingestion.batch_size` | int | `32` | `BatchProcessor` | 向量化批处理大小 |
+| `ingestion.chunk_refiner.use_llm` | bool | `true` | `ChunkRefiner` | 是否使用 LLM 进行 chunk 优化 |
+| `ingestion.metadata_enricher.use_llm` | bool | `true` | `MetadataEnricher` | 是否使用 LLM 进行元数据增强 |
+| `ingestion.formula_extraction.enabled` | bool | `true` | `FormulaExtractor` | 是否启用公式提取 |
+| `ingestion.formula_extraction.device` | string | `cpu` | `FormulaExtractor` | Pix2Text 设备：`cpu`, `cuda` |
+| `ingestion.formula_extraction.language` | string | `en` | `FormulaExtractor` | 公式语言：`en`, `ch_sim`, `multilingual` |
+| `ingestion.concurrency.llm_transform` | int | `5` | `BatchProcessor` | LLM 转换步骤最大并发数（chunk_refiner, metadata_enricher） |
+| `ingestion.concurrency.image_caption` | int | `3` | `BatchProcessor` | 图片描述最大并发数（较低以控制成本） |
+| `ingestion.concurrency.embedding_batch` | int | `1` | `BatchProcessor` | Embedding 批处理并发数（1=顺序，2+=并行dense/sparse） |
+
+**配置切换流程**：
+
+1. 修改 `config/settings.yaml` 中对应组件的字段
+2. 确保新后端的依赖已安装、凭据已配置（环境变量或 yaml 中的 `api_key`）
+3. 重启服务，工厂函数自动加载新实现，无需修改业务代码
+
+> **注意**：当前 MCP Server 入口为 `python -m src.mcp_server.server`（stdio 模式），不支持 HTTP 模式。所有日志默认输出到 `stderr`，追踪日志输出到 `logs/traces.jsonl`。
 
 ### 3.4 可观测性与可视化管理平台设计 (Observability & Visual Management Platform Design)
 
@@ -1077,6 +1250,142 @@ Hybrid Search 命中 Chunk（正文含 "[图片描述: 系统采用三层架构.
   - 当 Vision LLM 不可用时，系统回退到"仅保留图片占位符"模式，图片不参与检索但不阻塞 Ingestion 流程。
   - 在 Chunk 中标记 `has_unprocessed_images: true`，后续可增量补充描述。
 
+### 3.6 数学公式处理设计 (Mathematical Formula Processing Design)
+
+**目标：** 设计一套完整的公式处理方案，使 RAG 系统能够理解、索引并检索学术文档中的数学公式，实现"精准检索公式相关段落"的能力。
+
+#### 3.6.1 设计理念与策略选型
+
+学术文档中数学公式的处理是 RAG 系统的核心挑战之一。公式的表示形式多样（LaTeX、图片、Unicode），且公式与解释文本之间存在紧密的语义关联。本项目采用 **"Formula-to-Text" (公式转文)** 策略：
+
+| 策略 | 核心思路 | 优势 | 劣势 |
+|-----|---------|------|------|
+| **Formula-to-Text (公式转文)** | 利用 Pix2Text 将公式转化为 LaTeX 文本，复用纯文本 RAG 链路 | 架构统一、实现简单、兼容现有检索 | 公式语义理解依赖 Pix2Text 精度 |
+| **Multi-Embedding (多模态向量)** | 使用专用公式 Embedding 模型统一映射公式与文本 | 保留公式语义关系 | 需引入额外模型，架构复杂度高 |
+
+**本项目选型：Formula-to-Text（公式转文）策略**
+
+选型理由：
+- **架构统一**：无需引入专用公式 Embedding 模型，复用现有的文本 RAG 链路。
+- **Pix2Text 专精**：Pix2Text 是专门用于公式识别的开源工具，支持 LaTeX、图片等多种公式格式。
+- **双向检索支持**：通过公式元数据存储和 FormulaSearchEnhancer，实现"以文搜公式"和"以公式搜文"两种检索模式。
+
+#### 3.6.2 公式处理全流程设计
+
+公式处理贯穿 Ingestion Pipeline 的多个阶段，整体流程如下：
+
+```
+原始文档 (PDF/Markdown)
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Loader 阶段：图片公式检测                                 │
+│  - 解析文档，识别嵌入的公式图像资源                          │
+│  - 为每个公式图像生成唯一标识 (formula_id)                  │
+│  - 输出：Document (text + metadata.images[])            │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Splitter 阶段：保持公式-文本关联                           │
+│  - 切分时保留公式引用标记在对应 Chunk 中                     │
+│  - 通过位置邻近分析关联公式与解释文本                       │
+│  - 输出：Chunks (各自携带关联的 formula_refs)             │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Transform 阶段：公式识别与注入                            │
+│  - 调用 Pix2Text 识别每个公式图像                          │
+│  - 提取 LaTeX 源码，建立公式-ID 映射                       │
+│  - 通过位置邻近分析关联上下文文本                           │
+│  - 输出：Enriched Chunks (含公式元数据)                   │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Storage 阶段：双轨存储                                    │
+│  - 向量库：存储增强后的 Chunk (含公式描述) 用于检索         │
+│  - 公式索引：存储公式-LaTeX-Chunk 映射表                   │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### 3.6.3 各阶段技术要点
+
+**1. Loader 阶段：公式图像检测**
+
+- **识别策略**：
+  - 解析文档时识别可能包含公式的图像区域（PDF 中的公式图像、XObject 等）。
+  - 为每个公式图像生成全局唯一的 `formula_id`（建议格式：`{doc_hash}_{page}_{seq}`）。
+  - 将公式图像暂存，记录其在原文档中的位置信息。
+
+- **公式图像标记**：
+  - 在转换后的 Markdown 文本中，于公式图像原始位置插入占位符（如 `[FORMULA: {formula_id}]`）。
+  - 在 Document 的 Metadata 中维护 `formula_images` 列表，记录每个公式的 `formula_id`、页码、位置等信息。
+
+**2. Splitter 阶段：保持公式-文本关联**
+
+- **关联保持原则**：
+  - 公式引用标记应与其解释性文字（前后段落）尽量保持在同一 Chunk 中。
+  - 若公式出现在章节开头或结尾，切分时应将其归入语义上最相关的 Chunk。
+
+- **Chunk Metadata 扩展**：
+  - 每个 Chunk 的 Metadata 中增加 `formula_refs: List[formula_id]` 字段，记录该 Chunk 关联的公式列表。
+  - 此字段用于后续 Transform 阶段定位需要处理的公式，以及检索命中后定位关联公式。
+
+**3. Transform 阶段：公式识别与注入**
+
+这是公式处理的核心环节，负责将公式视觉信息转化为可检索的文本语义。
+
+- **Pix2Text 引擎**：
+  - 使用 Pix2Text 的 `enable_formula=True` 配置，专门识别数学公式。
+  - 支持多种公式格式：LaTeX、MathML、图片形式的公式。
+
+- **公式结构化提取**：
+  - 为每个公式分配全局唯一 `formula_id`。
+  - 提取公式的 LaTeX 源码（如 `E = mc^2`）。
+  - 通过位置邻近分析，关联公式与附近文本块。
+
+- **存储策略**：
+  - **推荐：注入 Metadata**：将公式信息存入 `chunk.metadata["formulas"]` 列表，格式如：
+    ```python
+    {
+        "formula_id": "abc123_1_2",
+        "latex": "E = mc^2",
+        "type": "inline",  # or "display"
+        "page": 1,
+        "context_text": "爱因斯坦质能方程描述了...",
+        "bbox": [x1, y1, x2, y2]
+    }
+    ```
+  - 同时在 Chunk 正文中的公式位置插入描述性文本（如 `[公式: E = mc^2]`），确保检索覆盖。
+
+- **缓存机制**：
+  - 为每个公式图像的内容计算哈希，存入处理缓存表。
+  - 重复处理时，若公式内容未变，直接复用已识别的 LaTeX，避免重复调用 Pix2Text。
+
+- **降级策略**：
+  - 当 Pix2Text 不可用时，系统回退到"仅保留公式占位符"模式，公式不参与检索但不阻塞 Ingestion 流程。
+  - 在 Chunk 中标记 `has_unprocessed_formulas: true`，后续可增量补充识别。
+
+#### 3.6.4 公式感知检索设计
+
+在 Query 阶段，系统通过 `FormulaSearchEnhancer` 支持公式感知检索：
+
+- **公式检测**：自动识别查询中的 LaTeX 公式（`$...$`, `$$...$$`）和 Unicode 数学符号。
+- **公式检索**：利用 Chunk metadata 中存储的公式信息进行跨引用检索。
+- **上下文增强**：为检索结果添加公式相关的上下文信息（公式ID、类型、页码等）。
+- **相关片段发现**：通过公式-Chunk 映射关系，发现与公式相关的其他文本片段。
+
+#### 3.6.5 质量保障与边界处理
+
+- **识别质量检测**：
+  - 若识别出的 LaTeX 过短或 Pix2Text 返回"无法识别"，标记该公式为 `low_quality`，可选择跳过索引。
+
+- **并发与重试**：
+  - 公式识别支持批量处理，提高吞吐量。
+  - 单个公式处理失败时，记录失败的 formula ID，不影响其他公式的处理进度。
+
 ## 4. 测试方案
 
 ### 4.1 设计理念：测试驱动开发 (TDD)
@@ -1104,6 +1413,18 @@ Hybrid Search 命中 Chunk（正文含 "[图片描述: 系统采用三层架构.
 #### 4.2.1 单元测试 (Unit Tests)
 
 **目标**：验证每个独立组件的内部逻辑正确性，隔离外部依赖。
+
+**pytest 标记与运行矩阵**：
+
+| 标记 | 说明 | 运行命令 |
+|-----|------|---------|
+| `@pytest.mark.unit` | 单元测试 | `pytest -m unit` |
+| `@pytest.mark.integration` | 集成测试 | `pytest -m integration` |
+| `@pytest.mark.e2e` | 端到端测试 | `pytest -m e2e` |
+| `@pytest.mark.llm` | 需要真实 LLM API | `pytest -m llm` |
+| `@pytest.mark.slow` | 执行时间较长 | `pytest -m slow` |
+
+> **⚠️ 非 Agent 覆盖范围说明**：本技术说明覆盖的是 **非 Agent** 的核心 RAG 模块。Agent 相关测试（如 `tests/e2e/test_agent_*`、`tests/integration/test_agent_*`）不在本说明范围内。
 
 **覆盖范围**：
 
@@ -1401,15 +1722,38 @@ Hybrid Search 命中 Chunk（正文含 "[图片描述: 系统采用三层架构.
 
 ### 5.2 目录结构
 
+> **⚠️ 说明**：以下目录结构基于当前代码库实际路径整理。完整路径与模块说明请参考 **1.5 当前实现状态**。
+
 ```
-smart-knowledge-hub/
+MODULAR-RAG-MCP-SERVER/  # 项目根目录（仓库名）
 │
-├── config/                              # 配置文件目录
-│   ├── settings.yaml                    # 主配置文件 (LLM/Embedding/VectorStore 配置)
-│   └── prompts/                         # Prompt 模板目录
-│       ├── image_captioning.txt         # 图片描述生成 Prompt
-│       ├── chunk_refinement.txt         # Chunk 重写 Prompt
-│       └── rerank.txt                   # LLM Rerank Prompt
+├── config/
+│   └── settings.yaml
+│
+├── src/
+│   ├── mcp_server/ (server.py, protocol_handler.py, tools/)
+│   ├── core/ (settings.py, types.py, query_engine/, response/, trace/)
+│   ├── ingestion/ (pipeline.py, document_manager.py, chunking/, transform/, embedding/, storage/)
+│   ├── libs/ (llm/, embedding/, splitter/, vector_store/, reranker/)
+│   ├── observability/ (logger.py, dashboard/, evaluation/)
+│   └── agent/  # ⚠️ 不在本说明范围
+│
+├── scripts/ (ingest.py, query.py, evaluate.py, start_dashboard.py)
+├── data/ (db/, images/)
+├── logs/ (traces.jsonl)
+├── tests/ (unit/, integration/, e2e/)
+├── main.py
+└── pyproject.toml
+```
+
+> **关键修正**：
+> - 项目名改为实际仓库名 `MODULAR-RAG-MCP-SERVER`
+> - Splitter 实现列表更新为 `recursive/structured/smart/academic`
+> - BM25 持久化为 JSON（而非 pickle）
+> - 标注 `src/agent/` 为非说明范围
+> - 移除未实现的 `config/prompts/` 和 `cache/` 目录
+
+### 5.3 模块说明
 │
 ├── src/                                 # 源代码主目录
 │   │
@@ -1838,23 +2182,131 @@ Dashboard (Streamlit UI)
 
 ### 5.5 配置驱动设计
 
+> **⚠️ 重要说明**：配置字段的唯一事实来源为 `config/settings.yaml`，详细字段说明请参见章节 **3.3.5 配置管理与切换流程**。
 
-系统通过 `config/settings.yaml` 统一配置各组件实现，支持零代码切换：
+---
 
-```yaml
-# config/settings.yaml 示例
+## 5.6 ID 与一致性契约（必读）
 
-# LLM 配置
-llm:
-  provider: azure           # azure | openai | ollama | deepseek
-  model: gpt-4o
-  azure_endpoint: "..."
-  api_key: "${AZURE_API_KEY}"
+> **⚠️ 本章节定义了系统内部各组件之间关于「文档、块、哈希」的标识语义，是理解增量更新、跨存储删除、幂等性的核心规范。请在阅读后续章节前先理解本节内容。**
 
-# Embedding 配置
-embedding:
-  provider: openai          # openai | azure | ollama (本地)
-  model: text-embedding-3-small
+### 核心概念定义
+
+本系统涉及三类关键标识，它们在不同的存储组件中有不同的名称和用途：
+
+| 标识类型 | 生成方式 | 用途 | 存储位置 |
+|---------|---------|------|---------|
+| **file_hash** | `SHA256(file_content)`（完整文件内容） | 文件完整性检查、增量更新判断 | `data/db/ingestion_history.db` |
+| **doc_hash** | `SHA256(source_path)`（源文件路径的前8位） | 文档级删除过滤、向量化元数据标记 | `ChromaDB.metadata.doc_hash` |
+| **chunk_id** | `{path_hash}_{chunk_index:04d}_{content_hash}` | 向量库主键、BM25  postings 关联 | `ChromaDB.id`, BM25 索引的 `chunk_id` |
+
+### 标识生成规则
+
+#### 1. file_hash（文件完整性哈希）
+
+```python
+# 计算方式：完整文件内容的 SHA256
+file_hash = hashlib.sha256(file_content).hexdigest()
+```
+
+- **用途**：在 `SQLiteIntegrityChecker` 中记录，用于判断「文件是否已变更」
+- **存储表**：`data/db/ingestion_history.db`
+  ```sql
+  CREATE TABLE ingestion_history (
+      file_hash TEXT PRIMARY KEY,  -- SHA256(file_content)
+      file_path TEXT NOT NULL,
+      file_size INTEGER,
+      status TEXT NOT NULL,  -- 'success' | 'failed' | 'processing'
+      processed_at TIMESTAMP,
+      error_msg TEXT,
+      chunk_count INTEGER
+  );
+  ```
+- **判断逻辑**：
+  - 新文件：hash 不存在 → 处理
+  - 已处理文件：hash 已存在且 status='success' → 跳过（实现零成本增量）
+  - 已处理但 hash 变化 → 重新处理
+
+#### 2. doc_hash（文档级删除标识）
+
+```python
+# 计算方式：源文件路径的 SHA256 前8位
+doc_hash = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:8]
+```
+
+- **用途**：
+  - **向量存储**：写入 ChromaDB 时，将 `doc_hash` 存入 `metadata.doc_hash`，用于按文档删除所有关联 chunks
+  - **BM25 索引**：删除时使用 `doc_hash` 前缀匹配，移除该文档的所有 postings
+- **示例**：文件路径 `/docs/azure.pdf` → `doc_hash = "a1b2c3d4"`
+
+#### 3. chunk_id（Chunk 主键）
+
+```python
+# 计算方式：路径哈希 + 块索引 + 内容哈希
+source_hash = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:8]  # 同 doc_hash
+content_hash = hashlib.sha256(chunk.text.encode("utf-8")).hexdigest()[:8]
+
+chunk_id = f"{source_hash}_{chunk_index:04d}_{content_hash}"
+```
+
+- **格式**：`{path_hash}_{index:04d}_{content_hash}`
+- **示例**：`a1b2c3d4_0001_e5f6g7h8`
+- **特点**：
+  - **幂等性**：相同内容 → 相同 chunk_id → 重复写入会覆盖而非新增
+  - **可追溯**：通过 chunk_id 可以反查源文件路径和块索引
+  - **BM25 关联**：BM25 索引中的 `chunk_id` 与 ChromaDB 的 `id` 一致，实现双向映射
+
+### 跨存储一致性示例
+
+#### 删除操作（delete_document）
+
+```python
+# 1. ChromaDB：按 metadata.doc_hash 删除
+chroma.delete_by_metadata({"doc_hash": source_hash})
+
+# 2. BM25：按 doc_hash 前缀删除 postings
+# 注意：BM25 存储的 chunk_id 以 path_hash 开头
+source_hash_for_bm25 = hashlib.sha256(source_path.encode()).hexdigest()[:8]
+bm25_indexer.remove_document(source_hash_for_bm25, collection)
+
+# 3. ImageStorage：按 doc_hash 删除关联图片
+images = image_storage.list_images(doc_hash=source_hash)
+for img in images:
+    image_storage.delete_image(img["image_id"])
+
+# 4. FileIntegrity：移除记录，允许重新摄入
+integrity.remove_record(source_hash)
+```
+
+#### 增量更新（Ingestion Pipeline）
+
+```python
+# Stage 1: 计算文件哈希
+file_hash = integrity_checker.compute_sha256(file_path)
+
+# 判断是否跳过
+if integrity_checker.should_skip(file_hash):
+    return  # 文件未变更，直接跳过
+
+# Stage 6: 写入时带上 doc_hash（用于后续删除）
+vector_upserter.upsert(
+    chunks=chunks,
+    vectors=dense_vectors,
+    file_hash=file_hash  # 存储到 metadata.doc_hash
+)
+```
+
+### 常见问题排查
+
+| 症状 | 可能原因 | 检查方式 |
+|-----|---------|---------|
+| 删除文档后向量库仍有残留 | BM25 删除时 path_hash 不匹配 | 对比 `source_path` 生成的 hash 与 BM25 postings 中的前缀 |
+| 重复摄入同一文件产生重复 chunks | chunk_id 生成逻辑不一致 | 检查 `VectorUpserter._generate_chunk_id()` 的输入是否一致 |
+| 增量更新未生效 | file_hash 计算方式变更 | 检查 `SQLiteIntegrityChecker.compute_sha256()` 是否使用文件内容 |
+
+---
+
+### 5.7 扩展性设计要点
   
 # Vision LLM 配置 (图片描述)
 vision_llm:
